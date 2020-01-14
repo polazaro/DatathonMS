@@ -18,6 +18,7 @@ import seaborn as sns
 import warnings
 from sklearn import metrics
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
@@ -25,20 +26,37 @@ from sklearn.svm import SVC ### Support Vector Machine
 from sklearn.ensemble import RandomForestClassifier ### Random forest
 import xgboost as xgb
 from xgboost import XGBClassifier ### XGBoosting
+from sklearn.linear_model import LogisticRegression
 warnings.filterwarnings("ignore")
 
 ###########---------------------CLASS---------------------###########
 
 class DatathonML:
     
-    def __init__(self, dir_datasets_train, dir_datasets_test):
+    def __init__(self):
         
-        self.elephant_name = 'elephant.csv'
-        self.ring_name = 'ring.csv'
-        self.yeast1_name = 'yeast1.csv'
+        self.SVM_parameters = {'SVM':{'SVM__C':[0.001,0.1,10,100,10e5],
+                               'SVM__gamma':[0.1,0.01]}}
+        self.RF_parameters = {'RF':{'RF__n_estimators':[100, 300, 500, 800, 1200],
+                              'RF__max_depth':[5, 8, 15, 25, 30]}}
         
-        self.dir_datasets_train = dir_datasets_train
-        self.dir_datasets_test = dir_datasets_test
+        self.XGB_parameters = {'XGB':{'XGB__n_estimators': range(60, 220, 40),
+                           'XGB__max_depth':[3, 4, 5]}}
+        
+        self.LR_parameters = {'LR':{"LR__C":np.logspace(-3,3,7), 
+                                    "LR__penalty":["l1","l2"]}}
+        
+        
+        
+        self.all_possible_models = {'RF':RandomForestClassifier(random_state=15325),
+                                    'SVM':SVC(),
+                                    'XGB':XGBClassifier(),
+                                    'LR': LogisticRegression()}
+        
+        self.threshold_distance = 0.1
+        self.results = {}
+        
+        print('Clase inicializada')
         
         
     def read_dataframe(self, dir_datasets, name):
@@ -46,36 +64,33 @@ class DatathonML:
         return pd.read_csv(dir_datasets + name, sep=';', skipinitialspace=True)
     
     
-    def obtain_labels(self, df, pos):
-    
-        if pos == 1 or pos == 2:
-            return list(df.iloc[:,-1])
-        else:
-            return [0 if label == 'negative' else 1 for label in list(df.iloc[:,-1])]
+    def obtain_labels(self, df):
+        
+            le = LabelEncoder()
+            return le.fit_transform(list(df.iloc[:,-1]))
+
         
         
-    def preprocess_dataframe(self, df, pos, mode):
+    def preprocess_dataframe(self, df):
     
         ### Erase the duplicate samples
-        df = df.drop_duplicates() 
+        df = df.drop_duplicates()
         
-        ### Obtain labels if we are in training
-        if mode == 'Train':
-            labels = self.obtain_labels(df, pos)
-        else: 
-            labels = []
+        ### Obtain labels
+        labels = self.obtain_labels(df)
         
         ### Clean columns that are uniques and does not give us any information
         eliminate_columns = []
         df = df.iloc[:,:-1]
         for column in df.columns:
             if df[column].dtype == 'object':
-                df[column] = pd.to_numeric(df[column].str.replace(',','.'), errors='coerce')
+                df[column] = pd.to_numeric(df[column].str.replace(',','.'), 
+                  errors='coerce')
             if len(df[column].unique()) == 1:
                 eliminate_columns.append(column)
         df_drop = df.drop(eliminate_columns, axis=1)
     
-        return df_drop, labels, eliminate_columns
+        return df_drop, labels
     
     
     def calculate_corr(self, df):
@@ -97,42 +112,96 @@ class DatathonML:
         return df
 
 
-    def auto_ml(self, df_test):
+    def compute_AUC(self, model, X_test, y_test):
         
-        ### Reading dataframes
-        df_elephant = self.read_dataframe(self.dir_datasets_train, self.elephant_name)
-        df_ring = self.read_dataframe(self.dir_datasets_train, self.ring_name)
-        df_yeast1 = self.read_dataframe(self.dir_datasets_train, self.yeast1_name)
+        fpr, tpr, thresholds = metrics.roc_curve(y_test, model.predict(X_test))
+        return metrics.auc(fpr, tpr)
+    
+    
+    def first_approximation_training(self, X_train, X_test, y_train, y_test):
+        
+        best_models = {}
+        for name in self.all_possible_models:
+            model = self.all_possible_models[name]
+            model.fit(X_train, y_train)
+            best_models[name] = self.compute_AUC(model, X_test, y_test)
+            
+        return best_models
+    
+    
+    def training_function(self, X_train, X_test, y_train, y_test, parameters,
+                          model, type_clf):
+        
+        steps = [('scaler', StandardScaler()), (type_clf, model)]
+        pipeline = Pipeline(steps)
+        grid = GridSearchCV(pipeline, param_grid=parameters, cv=5)
+        
+        grid.fit(X_train, y_train)
+        self.results[type_clf] = self.compute_AUC(grid, X_test, y_test)
+        
+
+    def auto_ml(self, df):
+        
+        
+        ### IDEA: HACER TODOS LOS MODELOS CON UN PARÁMETRO POR DEFECTO Y ELIMINAR
+        ### AQUELLOS QUE DEN BAJOS. QUEDARSE CON LOS 3 MÁS ALTOS Y HACER GRID_SEARCH
         
         ### Preprocessing dataframes
-        data_elephant, labels_elephant, eliminate_elephant = self.preprocess_dataframe(df_elephant, 1, 'Train')
-        data_ring, labels_ring, eliminate_ring = self.preprocess_dataframe(df_ring, 2, 'Train')
-        data_yeast1, labels_yeast1, eliminate_yeast1 = self.preprocess_dataframe(df_yeast1, 3, 'Train')
-        
+        data, labels = self.preprocess_dataframe(df)
+       
         ### Eliminating correlated features from dataset
-        data_elephant_nocorr = self.eliminate_corr_features(data_elephant, self.calculate_corr(data_elephant), 0.8)
-        data_ring_nocorr = self.eliminate_corr_features(data_ring, self.calculate_corr(data_ring), 0.8)
-        data_yeast1_nocorr = self.eliminate_corr_features(data_yeast1, self.calculate_corr(data_yeast1), 0.8)
+        data_nocorr = self.eliminate_corr_features(data, 
+                                                   self.calculate_corr(data),
+                                                   0.8)
         
         ### Data for training
-        X1 = data_elephant_nocorr
-        X2 = data_ring_nocorr
-        X3 = data_yeast1_nocorr
-        Y1 = labels_elephant
-        Y2 = labels_ring
-        Y3 = labels_yeast1
+        X = data_nocorr
+        Y = labels
         
-        ### Splitting for training
-        X_train1, X_test1, y_train1, y_test1 = train_test_split(X1,Y1,test_size=0.2, random_state=30, stratify=Y1)
-        X_train2, X_test2, y_train2, y_test2 = train_test_split(X2,Y2,test_size=0.2, random_state=30, stratify=Y2)
-        X_train3, X_test3, y_train3, y_test3 = train_test_split(X3,Y3,test_size=0.2, random_state=30, stratify=Y3)
+        ### Splitting for training and test
+        X_train, X_test, y_train, y_test = train_test_split(X,Y,test_size=0.3, 
+                                                            random_state=30, 
+                                                            stratify=Y)
 
-        return data_elephant, data_ring, data_yeast1
+        ### First approximation to eliminate the worst models
+        best_models = self.first_approximation_training(X_train, X_test, 
+                                                        y_train, y_test)
+        
+        ### Training all possible models
+        self.training_function(X_train, X_test, y_train, y_test,
+                          self.RF_parameters, 
+                          RandomForestClassifier(random_state=15325), 
+                          'RF')
+        
+        self.training_function(X_train, X_test, y_train, y_test,
+                          self.SVM_parameters, 
+                          SVC(), 
+                          'SVM')
+        self.training_function(X_train, X_test, y_train, y_test,
+                          self.XGB_parameters, 
+                          XGBClassifier(), 
+                          'XGB')
+        
+        
+#        self.training_function(self, X_train, X_test, y_train, y_test,
+#                          self.RF_parameters, 
+#                          SVC(), 
+#                          type_clf='RF')
+#        
+        return self.results
 
 
 ###########--------------------MAIN--------------------###########
 
-dir_train = 'C:/Users/Pablo.lazaro.herras1/Documents/Datathon/Datasets/'
-dir_test = 'C:/Users/Pablo.lazaro.herras1/Documents/Datathon/Datasets/'
-datathon = DatathonML(dir_train, dir_test)
-a,b,c = datathon.auto_ml(1)
+### Variables
+dir_dataset = 'C:/Users/Pablo.lazaro.herras1/Documents/Datathon/Datasets/'
+name = 'ring.csv'
+
+### Creating class
+datathon = DatathonML()
+
+### Reading dataframes
+df = datathon.read_dataframe(dir_dataset, name)
+
+### Main
+Y = datathon.auto_ml(df)
