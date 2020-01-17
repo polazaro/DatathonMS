@@ -27,33 +27,54 @@ from sklearn.ensemble import RandomForestClassifier ### Random forest
 import xgboost as xgb
 from xgboost import XGBClassifier ### XGBoosting
 from sklearn.linear_model import LogisticRegression
+import lightgbm as lgb
+from sklearn.model_selection import cross_val_score
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+from hyperopt.pyll.base import scope
 warnings.filterwarnings("ignore")
 
 ###########---------------------CLASS---------------------###########
 
 class DatathonML:
     
+    
     def __init__(self):
         
-        self.SVM_parameters = {'SVM':{'SVM__C':[0.001,0.1,10,100,10e5],
-                               'SVM__gamma':[0.1,0.01]}}
-        self.RF_parameters = {'RF':{'RF__n_estimators':[100, 300, 500, 800, 1200],
-                              'RF__max_depth':[5, 8, 15, 25, 30]}}
+        SVM_parameters = {'SVM__C':[0.001,0.1,10,100,10e5],
+                               'SVM__gamma':[0.1,0.01]}
+        RF_parameters = {'RF__n_estimators':[100, 300, 500, 800, 1200],
+                              'RF__max_depth':[5, 8, 15, 25, 30]}
         
-        self.XGB_parameters = {'XGB':{'XGB__n_estimators': range(60, 220, 40),
-                           'XGB__max_depth':[3, 4, 5]}}
+        XGB_parameters = {'XGB__n_estimators': range(60, 220, 40),
+                           'XGB__max_depth':[3, 4, 5]}
         
-        self.LR_parameters = {'LR':{"LR__C":np.logspace(-3,3,7), 
-                                    "LR__penalty":["l1","l2"]}}
+        LR_parameters = {"LR__C":np.logspace(-3,3,7), 
+                                    "LR__penalty":["l1","l2"]}
+        
+        LGB_parameters = {
+            'learning_rate': hp.loguniform('learning_rate', np.log(0.01),
+                                           np.log(1)),
+            'max_depth': scope.int(hp.quniform('max_depth', 5, 15, 1)),
+            'n_estimators': scope.int(hp.quniform('n_estimators', 5, 35, 1)),
+            'num_leaves': scope.int(hp.quniform('num_leaves', 5, 50, 1)),
+            'boosting_type': hp.choice('boosting_type', ['gbdt', 'dart']),
+            'colsample_bytree': hp.uniform('colsample_by_tree', 0.6, 1.0),
+            'reg_lambda': hp.uniform('reg_lambda', 0.0, 1.0),
+        }
+        
+        self.parameters = {'SVM': SVM_parameters,
+                           'RF': RF_parameters,
+                           'XGB': XGB_parameters,
+                           'LR': LR_parameters,
+                           'LGB': LGB_parameters}
         
         
-        
-        self.all_possible_models = {'RF':RandomForestClassifier(random_state=15325),
-                                    'SVM':SVC(),
+        self.all_possible_models = {'SVM':SVC()}
+                                    'RF':RandomForestClassifier(random_state=15325),
                                     'XGB':XGBClassifier(),
-                                    'LR': LogisticRegression()}
+                                    'LR': LogisticRegression(),
+                                    'LGB': lgb.LGBMClassifier()}
         
-        self.threshold_distance = 0.1
         self.results = {}
         
         print('Clase inicializada')
@@ -69,7 +90,6 @@ class DatathonML:
             le = LabelEncoder()
             return le.fit_transform(list(df.iloc[:,-1]))
 
-        
         
     def preprocess_dataframe(self, df):
     
@@ -116,8 +136,70 @@ class DatathonML:
         
         fpr, tpr, thresholds = metrics.roc_curve(y_test, model.predict(X_test))
         return metrics.auc(fpr, tpr)
+        
+
+    def training_function_bayes(self, param_space, 
+                                X_train, y_train, X_test, y_test, num_eval):
     
+        def objective_function(params):
+        
+            clf = lgb.LGBMClassifier(**params)
+            score = cross_val_score(clf, X_train, y_train, cv=5).mean()
+            return {'loss': -score, 'status': STATUS_OK}
+        
+        trials = Trials()
+        best_param = fmin(objective_function, 
+                          param_space, 
+                          algo=tpe.suggest, 
+                          max_evals=num_eval, 
+                          trials=trials,
+                          rstate= np.random.RandomState(1))
+        
+        best_param_values = [x for x in best_param.values()]
+        
+        if best_param_values[0] == 0:
+            boosting_type = 'gbdt'
+        else:
+            boosting_type= 'dart'
+                           
+        clf_best = lgb.LGBMClassifier(learning_rate=best_param_values[2],
+                                  num_leaves=int(best_param_values[5]),
+                                  max_depth=int(best_param_values[3]),
+                                  n_estimators=int(best_param_values[4]),
+                                  boosting_type=boosting_type,
+                                  colsample_bytree=best_param_values[1],
+                                  reg_lambda=best_param_values[6],
+                                 )
+                                      
+        clf_best.fit(X_train, y_train)
+        
+        self.results['LGB'] = self.compute_AUC(clf_best, X_test, y_test)
+        
+        return 
+      
+        
+    def select_best_models(self, all_models, range_p, flag):
+        
+        best_models_sort = {k: v for k, v in sorted(all_models.items(),
+                                                    key=lambda item: item[1],
+                                                    reverse=True)}
+                    
+        if flag == 0:
+            
+            final_models = []
+            max_value = list(best_models_sort.values())[0]
+            for model in best_models_sort:
+                if best_models_sort[model] >= (max_value-range_p):
+                    final_models.append(model)
+                    
+        elif flag == 1:
+            
+            final_models = (list(best_models_sort.keys())[0], list(best_models_sort.values())[0])
+            self.results = {}
+            
+        return final_models
     
+            
     def first_approximation_training(self, X_train, X_test, y_train, y_test):
         
         best_models = {}
@@ -129,7 +211,7 @@ class DatathonML:
         return best_models
     
     
-    def training_function(self, X_train, X_test, y_train, y_test, parameters,
+    def training_function_grid(self, X_train, X_test, y_train, y_test, parameters,
                           model, type_clf):
         
         steps = [('scaler', StandardScaler()), (type_clf, model)]
@@ -138,7 +220,7 @@ class DatathonML:
         
         grid.fit(X_train, y_train)
         self.results[type_clf] = self.compute_AUC(grid, X_test, y_test)
-        
+                
 
     def auto_ml(self, df):
         
@@ -163,39 +245,40 @@ class DatathonML:
                                                             random_state=30, 
                                                             stratify=Y)
 
+        
         ### First approximation to eliminate the worst models
-        best_models = self.first_approximation_training(X_train, X_test, 
+        first_approach = self.first_approximation_training(X_train, X_test, 
                                                         y_train, y_test)
         
-        ### Training all possible models
-        self.training_function(X_train, X_test, y_train, y_test,
-                          self.RF_parameters, 
-                          RandomForestClassifier(random_state=15325), 
-                          'RF')
+        print('First approach: ', first_approach)
         
-        self.training_function(X_train, X_test, y_train, y_test,
-                          self.SVM_parameters, 
-                          SVC(), 
-                          'SVM')
-        self.training_function(X_train, X_test, y_train, y_test,
-                          self.XGB_parameters, 
-                          XGBClassifier(), 
-                          'XGB')
+        best_models = self.select_best_models(first_approach, 0.15, 0)
         
-        
-#        self.training_function(self, X_train, X_test, y_train, y_test,
-#                          self.RF_parameters, 
-#                          SVC(), 
-#                          type_clf='RF')
-#        
-        return self.results
+        print('Models from first approach: ', self.all_possible_models)
+        for name_model in self.all_possible_models:
+            
+            print(name_model)
+            ### Training all possible models
+            if name_model != 'LGB':
+                self.training_function_grid(X_train, X_test, 
+                                            y_train, y_test,
+                                  self.parameters[name_model], 
+                                  self.all_possible_models[name_model], 
+                                  name_model)
+            else:
+                self.training_function_bayes(self.parameters[name_model], X_train, 
+                                             y_train, X_test, 
+                                             y_test, 75)
+                
+                 
+        return self.select_best_models(self.results, 0, 1)
 
 
 ###########--------------------MAIN--------------------###########
 
 ### Variables
 dir_dataset = 'C:/Users/Pablo.lazaro.herras1/Documents/Datathon/Datasets/'
-name = 'ring.csv'
+name = 'yeast1.csv'
 
 ### Creating class
 datathon = DatathonML()
@@ -204,4 +287,4 @@ datathon = DatathonML()
 df = datathon.read_dataframe(dir_dataset, name)
 
 ### Main
-Y = datathon.auto_ml(df)
+final_results = datathon.auto_ml(df)
