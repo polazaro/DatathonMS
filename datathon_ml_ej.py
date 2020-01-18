@@ -448,3 +448,29 @@ class DatathonML:
         self.print_final_solution(final_solution)
         
         return final_solution
+
+
+###########--------------------MAIN--------------------###########
+
+### Variables
+dir_dataset = 'C:/Users/Pablo.lazaro.herras1/Documents/Datathon/Datasets/'
+name = 'elephant.csv'
+
+# Start counting.
+start_time = time()
+# Calculate the elapsed time.
+elapsed_time = time() - start_time
+        
+### Creating class
+datathon = DatathonML()
+
+### Reading dataframes
+df = datathon.read_dataframe(dir_dataset, name)
+
+### Main
+final_results = datathon.auto_ml(df)
+
+elapsed_time = time() - start_time
+
+print("Elapsed time: %0.3f seconds." % elapsed_time)
+
