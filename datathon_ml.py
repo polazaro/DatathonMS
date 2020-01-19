@@ -47,9 +47,9 @@ class DatathonML:
 
         # All hyperparameters for the grid search
         SVM_parameters = {'SVM__C': [0.001, 0.01, 0.1, 10, 100, 10e5],
-                          'SVM__gamma': [0.1, 0.01, 0.5, 0.001]}
+                          'SVM__gamma': [0.1, 0.01, 0.001]}
         RF_parameters = {'RF__n_estimators': [100, 300, 500, 800, 1000,
-                                              1200, 1400]}
+                                              1200]}
 
         XGB_parameters = {'XGB__n_estimators': [10, 30, 60, 80, 100, 120, 140,
                                                 160, 180, 200, 220, 300,
