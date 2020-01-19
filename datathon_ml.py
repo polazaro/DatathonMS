@@ -16,6 +16,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import lightgbm as lgb
+from time import time
 from sklearn import metrics
 from sklearn.feature_selection import f_classif
 from sklearn.feature_selection import SelectPercentile
@@ -238,7 +239,7 @@ class DatathonML:
 
         if flag == 0:  # For the first approximation
 
-            final_models = ['SVM']
+            final_models = []
             max_value = list(best_models_sort.values())[0]
             for model in best_models_sort:
                 if best_models_sort[model] >= (max_value-range_p):
@@ -449,7 +450,7 @@ class DatathonML:
                                                              y_train, y_test)
 
         # Selecting the best model (flag = 0) and the range = 0.15
-        best_models = self.__select_best_models(first_approach, 0.15, 0)
+        best_models = self.__select_best_models(first_approach, 0.10, 0)
 
         # For loop to compute the hyperparameter search for each model
         for name_model in best_models:
@@ -492,3 +493,29 @@ class DatathonML:
         self.__print_final_solution(final_solution)
 
         return final_solution[1]  # Returning only the AUC
+
+
+### Variables
+##dir_dataset = 'C:/Users/manuel.jesus.galan.1/Desktop/Datathon/Datasets/'
+###name = 'yeast1.csv' 
+
+# Start counting.
+#start_time = time()
+# Calculate the elapsed time.
+#elapsed_time = time() - start_time
+        
+### Creating class
+#datathon = DatathonML()
+
+### Reading dataframes
+#df = datathon.read_dataframe(dir_dataset, name)
+
+### Main
+#final_results = datathon.auto_ml(df)
+
+#elapsed_time = time() - start_time
+
+#print("Elapsed time: %0.3f seconds." % elapsed_time)
+
+
+
